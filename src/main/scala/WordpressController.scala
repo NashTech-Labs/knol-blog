@@ -24,8 +24,6 @@ case class FormattedBlogger(name: String, numberOfBlogs: Int, totalViews: Int)
 
 case object ProcessBlogsView
 
-case object Start
-
 case class Blogger(blogId: List[Int], authorId: Int, name: String, numberOfBlogs: Int, views: List[Int], totalViews: Int)
 
 case class BlogViews(date: Date, views: Int)
@@ -46,12 +44,13 @@ object BlogViews {
 
 class WordpressController(implicit system: ActorSystem) extends Actor with ActorLogging {
 
-  val date = new DateTime(System.currentTimeMillis())
   val config = ConfigFactory.load()
-  val SITE_NAME = sys.env.getOrElse("SITE_NAME", config.getString("site.name"))
-  val ACCESS_TOKEN = sys.env.getOrElse("SITE_ACCESS_TOKEN", config.getString("site.accessToken"))
-  val BLOGS_LIMIT = sys.env.getOrElse("BLOGS_LIMIT", config.getInt("site.blogslimit"))
-  val SLACK_API_TOKEN = sys.env.getOrElse("SLACK_API_TOKEN", config.getString("site.slackApiToken"))
+  val date = new DateTime(System.currentTimeMillis())
+  val SITE_NAME = config.getString("site.name")
+  val ACCESS_TOKEN = config.getString("site.accessToken")
+  val BLOGS_LIMIT = config.getInt("site.blogsLimit")
+  val SLACK_API_TOKEN = config.getString("slack.token")
+  val CHANNEL_NAME = config.getString("slack.name")
 
   implicit val formats = DefaultFormats
 
@@ -73,17 +72,11 @@ class WordpressController(implicit system: ActorSystem) extends Actor with Actor
       val formattedFirstDay = format.format(firstDay)
       val formattedLastDay = format.format(lastDay)
 
-      println("-----------------------------First day = " + firstDay)
-      println("-----------------------------Last day = " + lastDay)
-      println("-----------------------------Formatted First day = " + formattedFirstDay)
-      println("-----------------------------Formatted Last day = " + formattedLastDay)
+      log.info("Received message Process Blog Views and going to getTotalPost function")
 
-      println("Received message Process Blog Views and going to getTotalPost function")
       val totalPosts = getTotalPost(formattedFirstDay, formattedLastDay) // yyyy-MM-dd
 
-      println("------------------------- Total no. of posts = " + totalPosts.size)
-
-      println("-------------------------- Posts = " + totalPosts.mkString("\n"))
+      log.info("Posts = " + totalPosts.mkString("\n"))
 
       val postByAuthorIds = totalPosts.groupBy { post =>
         if (post.author.first_name.nonEmpty) {
@@ -106,8 +99,8 @@ class WordpressController(implicit system: ActorSystem) extends Actor with Actor
 
       val finalResult = result.sortBy(_.totalViews).reverse
 
-      println("total number of blogs in a month >>>>>>>>>>>" + totalPosts.size)
-      println("result>>>>>>>>>>>" + finalResult.mkString("\n"))
+      log.info("total number of blogs in a month" + totalPosts.size)
+      log.info("result" + finalResult.mkString("\n"))
 
       val client = SlackApiClient(SLACK_API_TOKEN)
       val eventualChannels = client.listChannels()
@@ -119,7 +112,7 @@ class WordpressController(implicit system: ActorSystem) extends Actor with Actor
       }
 
       val eventualMaybeChanId = eventualChannelNameToId.map { channelNameToId =>
-        channelNameToId.get("blogger-of-the-month")
+        channelNameToId.get(CHANNEL_NAME)
       }
 
       val eventualChanId = eventualMaybeChanId.map { maybeChanId =>
@@ -146,12 +139,12 @@ class WordpressController(implicit system: ActorSystem) extends Actor with Actor
   }
 
   def getTotalPost(afterDate: String, beforeDate: String): List[Post] = {
-    println("Inside getTotalPost function")
+    log.info("Inside getTotalPost function")
     val requestUrl =
       s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
          |?after=%s&before=%s&number=$BLOGS_LIMIT""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
 
-    println("Sending request")
+    log.info("Sending request")
 
     val eventualResponse = Http.default(dispatch.url(requestUrl) OK as.String)
 
@@ -227,8 +220,6 @@ class WordpressController(implicit system: ActorSystem) extends Actor with Actor
 
 object Boot extends App {
   implicit val system = ActorSystem("Blogger-Scheduler")
-
-  println("Sending message Start")
 
   val blogScheduler = system.actorOf(Props(new WordpressController()))
 
