@@ -32,11 +32,13 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with A
 
       log.info("Posts = " + totalPosts.mkString("\n"))
 
-      val postByAuthorIds = totalPosts.groupBy { post =>
-        if (post.author.first_name.nonEmpty) {
-          (post.author.ID, post.author.first_name)
-        } else {
-          (post.author.ID, post.author.name)
+      val postByAuthorIds = totalPosts.fold(Map[(Int, String), List[Post]]()) {
+        _.groupBy { post =>
+          if (post.author.first_name.nonEmpty) {
+            (post.author.ID, post.author.first_name)
+          } else {
+            (post.author.ID, post.author.name)
+          }
         }
       }
 
@@ -45,7 +47,7 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with A
       log.info("total number of blogs in a month" + totalPosts.size)
       log.info("result" + finalResult.mkString("\n"))
 
-      postMessageOnSlack(totalPosts, finalResult)
+      postMessageOnSlack(totalPosts.fold(List[Post]())(identity), finalResult)
   }
 
   def postMessageOnSlack(totalPosts: List[Post], finalResult: List[Blogger]): Future[String] = {
@@ -83,7 +85,7 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with A
       case ((authorId, authorName), posts) =>
         val viewsCountAndBlogId = posts.map { blog =>
           val viewsCount = wordpressService.getPostViewByPostId(blog.ID)
-          (blog.ID, viewsCount)
+          (blog.ID, viewsCount.getOrElse(0))
         }
         val totalViews = viewsCountAndBlogId.map { case (_, views) => views }.sum
         val blogIds = viewsCountAndBlogId.map { case (blogId, _) => blogId }
