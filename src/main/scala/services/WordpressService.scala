@@ -6,6 +6,7 @@ import dispatch._
 import net.liftweb.json.JsonAST.JArray
 import net.liftweb.json.{parse => liftParse, _}
 import org.joda.time.DateTime
+import org.slf4j.LoggerFactory
 import utilities.ConfigHelper._
 
 import scala.annotation.tailrec
@@ -29,7 +30,7 @@ object BlogViews {
   }
 
   def extractJValue(myJValue: JsonAST.JValue) = myJValue match {
-    case JInt(views) => views
+    case JInt(views)   => views
     case JString(date) => date
   }
 }
@@ -39,47 +40,57 @@ object WordpressService extends WordpressService
 class WordpressService {
 
   implicit val formats = DefaultFormats
+  val logger = LoggerFactory.getLogger(this.getClass().getName())
 
   val INITIAL_OFFSET = 100
 
-  def getTotalPost(afterDate: String, beforeDate: String): List[Post] = {
-    val requestUrl =
-      s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
-         |?after=%s&before=%s&number=$BLOGS_LIMIT""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
+  def getTotalPost(afterDate: String, beforeDate: String): Option[List[Post]] = {
+    try {
+      val requestUrl =
+        s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
+            |?after=%s&before=%s&number=$BLOGS_LIMIT""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
 
-    val eventualResponse = Http.default(dispatch.url(requestUrl) OK as.String)
+      val eventualResponse = Http.default(dispatch.url(requestUrl) OK as.String)
 
-    val maybeBlogs = JArray(liftParse(eventualResponse()).children).extractOpt[Blogs]
+      val optionalBlogs = JArray(liftParse(eventualResponse()).children).extractOpt[Blogs]
 
-    @tailrec
-    def getPostInOffset(found: Int, totalPosts: List[Post], offset: Int): List[Post] = {
-      if (offset > found || found == 0) {
-        totalPosts
-      } else {
-        val requestUrl =
-          s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
-             |?after=%s&before=%s&number=$BLOGS_LIMIT&offset=$offset""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
+      @tailrec
+      def getPostInOffset(found: Int, totalPosts: List[Post], offset: Int): List[Post] = {
+        if (offset > found || found == 0) {
+          totalPosts
+        } else {
+          val requestUrl =
+            s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
+                |?after=%s&before=%s&number=$BLOGS_LIMIT&offset=$offset""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
 
-        val response = executeRequestWithoutAuth(requestUrl)
-        val maybeOffsetPosts = (liftParse(response) \\ "posts").extractOpt[List[Post]]
+          val response = executeRequestWithoutAuth(requestUrl)
+          val optionalPosts = (liftParse(response) \\ "posts").extractOpt[List[Post]]
 
-        val (newFound, newTotalPosts, newOffset) = maybeOffsetPosts.fold(0, totalPosts, offset) { offsetPosts =>
-          val filteredPosts = offsetPosts.filterNot(_.title.toLowerCase.contains("knolx"))
-          val newTotalPosts = totalPosts ++ filteredPosts
+          val (newFound, newTotalPosts, newOffset) = optionalPosts.fold(0, totalPosts, offset) { offsetPosts =>
+            val filteredPosts = offsetPosts.filterNot(_.title.toLowerCase.contains("knolx"))
+            val newTotalPosts = totalPosts ++ filteredPosts
 
-          (found, newTotalPosts, offset + 100)
+            (found, newTotalPosts, offset + 100)
+          }
+          getPostInOffset(newFound, newTotalPosts, newOffset)
         }
-        getPostInOffset(newFound, newTotalPosts, newOffset)
       }
-    }
 
-    maybeBlogs.fold(List[Post]()) { blogs =>
-      getPostInOffset(blogs.found,
-        blogs.posts.filterNot(_.title.toLowerCase.contains("knolx")), INITIAL_OFFSET)
+      optionalBlogs match {
+        case Some(blogs) =>
+          Some(getPostInOffset(blogs.found, blogs.posts.filterNot(_.title.toLowerCase.contains("knolx")), INITIAL_OFFSET))
+        case None        =>
+          logger.info(s"No blog found between $afterDate and $beforeDate")
+          None
+      }
+    } catch {
+      case ex: Exception =>
+        logger.error(s"Got an exception while getting total posts from Wordpress: $ex")
+        None
     }
   }
 
-  def getPostViewByPostId(postId: Int): Int = {
+  def getPostViewByPostId(postId: Int): Option[Int] = {
     try {
       val calendar = Calendar.getInstance
       val requestUrl =
@@ -92,14 +103,17 @@ class WordpressService {
       val blogPostDate =
         DateTime.parse(BlogViews.extractJValue(liftParse(response) \\ "post" \ "post_date").asInstanceOf[String].split(" ").head).toDate
 
-      dailyViews.map(BlogViews(_)).toList.filter { blogViews =>
+      val totalViews = dailyViews.map(BlogViews(_)).toList.filter { blogViews =>
         calendar.setTime(blogPostDate)
         calendar.add(Calendar.DATE, 31)
         blogViews.date before calendar.getTime
       }.map(_.views).sum
+
+      Some(totalViews)
     } catch {
       case ex: Exception =>
-        0
+        logger.error(s"Got an exception while getting blog views by blog id $postId from Wordpress: $ex")
+        None
     }
   }
 
