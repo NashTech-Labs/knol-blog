@@ -10,6 +10,7 @@ import org.joda.time.DateTime
 import slack.api.SlackApiClient
 import com.typesafe.akka.extension.quartz.QuartzSchedulerExtension
 
+import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext.Implicits.global
 
 case class Author(ID: Int, login: String, email: Boolean, name: String, first_name: String, last_name: String, nice_name: String,
@@ -158,8 +159,9 @@ class WordpressController(implicit system: ActorSystem) extends Actor with Actor
 
     val initialOffset = 100
 
+    @tailrec
     def getPostInOffset(found: Int, totalPosts: List[Post], offset: Int): List[Post] = {
-      if (offset > found) {
+      if (offset > found || found == 0) {
         totalPosts
       } else {
         val requestUrl =
@@ -167,13 +169,15 @@ class WordpressController(implicit system: ActorSystem) extends Actor with Actor
              |?after=%s&before=%s&number=$BLOGS_LIMIT&offset=$offset""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
 
         val response = executeRequestWithoutAuth(requestUrl)
-
         val maybeOffsetPosts = (liftParse(response) \\ "posts").extractOpt[List[Post]]
-        maybeOffsetPosts.fold(totalPosts) { offsetPosts =>
+
+        val (newFound, newTotalPosts, newOffset) = maybeOffsetPosts.fold(0, totalPosts, offset) { offsetPosts =>
           val filteredPosts = offsetPosts.filterNot(_.title.toLowerCase.contains("knolx"))
           val newTotalPosts = totalPosts ++ filteredPosts
-          getPostInOffset(found, newTotalPosts, offset + 100)
+
+          (found, newTotalPosts, offset + 100)
         }
+        getPostInOffset(newFound, newTotalPosts, newOffset)
       }
     }
 
