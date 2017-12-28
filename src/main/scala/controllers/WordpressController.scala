@@ -4,8 +4,8 @@ import akka.actor.{Actor, _}
 import net.liftweb.json.{parse => liftParse, _}
 import services.{Post, WordpressService}
 import slack.api.SlackApiClient
-import utilities.CalendarHelper
 import utilities.ConfigHelper._
+import utilities.{CalendarHelper, LoggerHelper, MessageHelper}
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -16,7 +16,7 @@ case object ProcessBlogsView
 
 case class Blogger(blogId: List[Int], authorId: Int, name: String, numberOfBlogs: Int, views: List[Int], totalViews: Int)
 
-class WordpressController(implicit val system: ActorSystem) extends Actor with ActorLogging {
+class WordpressController(implicit val system: ActorSystem) extends Actor with LoggerHelper {
 
   val wordpressService: WordpressService = WordpressService
 
@@ -24,13 +24,14 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with A
 
   def receive: Receive = {
     case ProcessBlogsView =>
-      log.info("Received message Process Blog Views and going to getTotalPost function")
+      logger.info("Received message Process Blog Views and going to getTotalPost function")
 
       val firstDay = CalendarHelper.getFirstDay
       val lastDay = CalendarHelper.getLastDay
       val totalPosts = wordpressService.getTotalPost(firstDay, lastDay)
 
-      log.info("Posts = " + totalPosts.mkString("\n"))
+      logger.info("Posts = " + totalPosts.fold("")(_.mkString("\n")))
+      logger.info("Total Posts = " + totalPosts.fold(0)(_.size))
 
       val postByAuthorIds = totalPosts.fold(Map[(Int, String), List[Post]]()) {
         _.groupBy { post =>
@@ -44,40 +45,12 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with A
 
       val finalResult = getFinalResult(postByAuthorIds)
 
-      log.info("total number of blogs in a month" + totalPosts.size)
-      log.info("result" + finalResult.mkString("\n"))
+      logger.info("total number of blogs in a month" + totalPosts.size)
+      logger.info("result" + finalResult.mkString("\n"))
 
-      postMessageOnSlack(totalPosts.fold(List[Post]())(identity), finalResult)
-  }
+      val formattedResult = formatResult(finalResult, totalPosts.fold(List[Post]())(identity)) //.toList
 
-  def postMessageOnSlack(totalPosts: List[Post], finalResult: List[Blogger]): Future[String] = {
-    val client = SlackApiClient(SLACK_API_TOKEN)
-
-    val eventualMaybeChanId = client.listChannels().map { channels =>
-      channels.map { channel =>
-        channel.name -> channel.id
-      }.toMap.get(CHANNEL_NAME)
-    }
-
-    eventualMaybeChanId flatMap { maybeChanId =>
-      maybeChanId.fold(Future.successful("")) { chanId =>
-        val index = 1 to totalPosts.size
-
-        val formattedFinalResult = finalResult.map { blogger =>
-          FormattedBlogger(blogger.name, blogger.numberOfBlogs, blogger.totalViews)
-        }
-
-        val formattedBlogsWithIndex =
-          (index, formattedFinalResult)
-            .zipped
-            .map((index, formattedBlogger) => (index, formattedBlogger))
-            .map { case (rank, formattedBlogger) =>
-              rank + ". " + formattedBlogger.name + " " + formattedBlogger.numberOfBlogs + " " + formattedBlogger.totalViews
-            }
-
-        client.postChatMessage(chanId, formattedBlogsWithIndex mkString "\n", Some("Bot"))
-      }
-    }
+      postMessageOnSlack(formattedResult)
   }
 
   def getFinalResult(postByAuthorIds: Map[(Int, String), List[Post]]): List[Blogger] = {
@@ -94,5 +67,39 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with A
     }.toList
 
     result.sortBy(_.totalViews).reverse
+  }
+
+  def formatResult(finalResult: List[Blogger], totalPosts: List[Post]) = {
+    val index = 1 to totalPosts.size
+
+    val formattedFinalResult = finalResult.map { blogger =>
+      FormattedBlogger(blogger.name, blogger.numberOfBlogs, blogger.totalViews)
+    }
+
+    val formattedBlogsWithIndex =
+      (index, formattedFinalResult)
+        .zipped
+        .map((index, formattedBlogger) => (index, formattedBlogger))
+        .map { case (rank, formattedBlogger) =>
+          f"$rank%-10s${formattedBlogger.name}%-20s${formattedBlogger.numberOfBlogs}%-20d${formattedBlogger.totalViews}%-10d"
+        } mkString "\n"
+
+    MessageHelper.getMessage(formattedFinalResult, formattedBlogsWithIndex, totalPosts.length)
+  }
+
+  def postMessageOnSlack(formattedResult: String): Future[String] = {
+    val client = SlackApiClient(SLACK_API_TOKEN)
+
+    val eventualMaybeChanId = client.listChannels().map { channels =>
+      channels.map { channel =>
+        channel.name -> channel.id
+      }.toMap.get(CHANNEL_NAME)
+    }
+
+    eventualMaybeChanId flatMap { maybeChanId =>
+      maybeChanId.fold(Future.successful("")) { chanId =>
+        client.postChatMessage(chanId, formattedResult, Some("Blogger of the Month"))
+      }
+    }
   }
 }

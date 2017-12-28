@@ -6,8 +6,8 @@ import dispatch._
 import net.liftweb.json.JsonAST.JArray
 import net.liftweb.json.{parse => liftParse, _}
 import org.joda.time.DateTime
-import org.slf4j.LoggerFactory
 import utilities.ConfigHelper._
+import utilities.LoggerHelper
 
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -37,10 +37,9 @@ object BlogViews {
 
 object WordpressService extends WordpressService
 
-class WordpressService {
+class WordpressService extends LoggerHelper {
 
   implicit val formats = DefaultFormats
-  val logger = LoggerFactory.getLogger(this.getClass().getName())
 
   val INITIAL_OFFSET = 100
 
@@ -48,7 +47,7 @@ class WordpressService {
     try {
       val requestUrl =
         s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
-            |?after=%s&before=%s&number=$BLOGS_LIMIT""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
+           |?after=%s&before=%s&number=$BLOGS_LIMIT""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
 
       val eventualResponse = Http.default(dispatch.url(requestUrl) OK as.String)
 
@@ -61,7 +60,7 @@ class WordpressService {
         } else {
           val requestUrl =
             s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
-                |?after=%s&before=%s&number=$BLOGS_LIMIT&offset=$offset""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
+               |?after=%s&before=%s&number=$BLOGS_LIMIT&offset=$offset""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
 
           val response = executeRequestWithoutAuth(requestUrl)
           val optionalPosts = (liftParse(response) \\ "posts").extractOpt[List[Post]]
