@@ -2,7 +2,7 @@ package utilities
 
 import controllers.FormattedBlogger
 
-object MessageHelper {
+class MessageHelper {
 
   def getMessage(formattedFinalResult: List[FormattedBlogger],
                  formattedBlogsWithIndex: String,
@@ -28,3 +28,5 @@ object MessageHelper {
     initialText + standings + endingText
   }
 }
+
+object MessageHelper extends MessageHelper
