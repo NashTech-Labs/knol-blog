@@ -23,14 +23,14 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with L
 
   def receive: Receive = {
     case ProcessBlogsView =>
-      logger.info("Got a request to get total blogs and blogs views")
+        info("Got a request to get total blogs and blogs views")
 
       val firstDay = CalendarHelper.getFirstDay
       val lastDay = CalendarHelper.getLastDay
       val optionalPosts = wordpressService.getTotalPost(firstDay, lastDay)
 
-      logger.info("Posts = " + optionalPosts.fold("")(_.mkString("\n")))
-      logger.info(s"Total number of posts between $firstDay and $lastDay is ${optionalPosts.fold(0)(_.size)}")
+        info("Posts = " + optionalPosts.fold("")(_.mkString("\n")))
+        info(s"Total number of posts between $firstDay and $lastDay is ${optionalPosts.fold(0)(_.size)}")
 
       optionalPosts match {
         case Some(posts) =>
@@ -46,7 +46,7 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with L
 
           postMessageOnSlack(formatResult(formattedBloggers, posts))
         case None        =>
-          logger.info(s"No blog found between $firstDay and $lastDay")
+            info(s"No blog found between $firstDay and $lastDay")
       }
   }
 

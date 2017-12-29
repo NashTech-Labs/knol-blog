@@ -79,12 +79,12 @@ class WordpressService extends LoggerHelper {
         case Some(blogs) =>
           Some(getPostInOffset(blogs.found, blogs.posts.filterNot(_.title.toLowerCase.contains("knolx")), INITIAL_OFFSET))
         case None        =>
-          logger.info(s"No blog found between $afterDate and $beforeDate")
+          info(s"No blog found between $afterDate and $beforeDate")
           None
       }
     } catch {
       case ex: Exception =>
-        logger.error(s"Got an exception while getting total posts from Wordpress: $ex")
+        error(s"Got an exception while getting total posts from Wordpress: $ex")
         None
     }
   }
@@ -111,7 +111,7 @@ class WordpressService extends LoggerHelper {
       Some(totalViews)
     } catch {
       case ex: Exception =>
-        logger.error(s"Got an exception while getting blog views by blog id $postId from Wordpress: $ex")
+        error(s"Got an exception while getting blog views by blog id $postId from Wordpress: $ex")
         None
     }
   }
