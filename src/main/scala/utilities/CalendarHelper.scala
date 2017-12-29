@@ -23,4 +23,13 @@ object CalendarHelper {
 
     format.format(calendar.getTime)
   }
+
+  def getMonthAndYear: String = {
+    val calendar = Calendar.getInstance()
+    val monthFormat = new SimpleDateFormat("MMM, yyyy")
+
+    calendar.add(Calendar.MONTH, -2)
+
+    monthFormat.format(calendar.getTime)
+  }
 }

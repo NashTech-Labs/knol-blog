@@ -4,84 +4,54 @@ import akka.actor.{Actor, _}
 import net.liftweb.json.{parse => liftParse, _}
 import services.{Post, WordpressService}
 import slack.api.SlackApiClient
-import utilities.CalendarHelper
 import utilities.ConfigHelper._
+import utilities.{CalendarHelper, LoggerHelper, MessageHelper}
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 
-case class FormattedBlogger(name: String, numberOfBlogs: Int, totalViews: Int)
+case class FormattedBlogger(name: String, numberOfBlogs: Int, views: List[Int], totalViews: Int)
 
 case object ProcessBlogsView
 
-case class Blogger(blogId: List[Int], authorId: Int, name: String, numberOfBlogs: Int, views: List[Int], totalViews: Int)
-
-class WordpressController(implicit val system: ActorSystem) extends Actor with ActorLogging {
+class WordpressController(implicit val system: ActorSystem) extends Actor with LoggerHelper {
 
   val wordpressService: WordpressService = WordpressService
+  val messageHelper: MessageHelper = MessageHelper
 
   implicit val formats = DefaultFormats
 
   def receive: Receive = {
     case ProcessBlogsView =>
-      log.info("Received message Process Blog Views and going to getTotalPost function")
+        info("Got a request to get total blogs and blogs views")
 
       val firstDay = CalendarHelper.getFirstDay
       val lastDay = CalendarHelper.getLastDay
-      val totalPosts = wordpressService.getTotalPost(firstDay, lastDay)
+      val optionalPosts = wordpressService.getTotalPost(firstDay, lastDay)
 
-      log.info("Posts = " + totalPosts.mkString("\n"))
+        info("Posts = " + optionalPosts.fold("")(_.mkString("\n")))
+        info(s"Total number of posts between $firstDay and $lastDay is ${optionalPosts.fold(0)(_.size)}")
 
-      val postByAuthorIds = totalPosts.fold(Map[(Int, String), List[Post]]()) {
-        _.groupBy { post =>
-          if (post.author.first_name.nonEmpty) {
-            (post.author.ID, post.author.first_name)
-          } else {
-            (post.author.ID, post.author.name)
-          }
-        }
-      }
-
-      val finalResult = getFinalResult(postByAuthorIds)
-
-      log.info("total number of blogs in a month" + totalPosts.size)
-      log.info("result" + finalResult.mkString("\n"))
-
-      postMessageOnSlack(totalPosts.fold(List[Post]())(identity), finalResult)
-  }
-
-  def postMessageOnSlack(totalPosts: List[Post], finalResult: List[Blogger]): Future[String] = {
-    val client = SlackApiClient(SLACK_API_TOKEN)
-
-    val eventualMaybeChanId = client.listChannels().map { channels =>
-      channels.map { channel =>
-        channel.name -> channel.id
-      }.toMap.get(CHANNEL_NAME)
-    }
-
-    eventualMaybeChanId flatMap { maybeChanId =>
-      maybeChanId.fold(Future.successful("")) { chanId =>
-        val index = 1 to totalPosts.size
-
-        val formattedFinalResult = finalResult.map { blogger =>
-          FormattedBlogger(blogger.name, blogger.numberOfBlogs, blogger.totalViews)
-        }
-
-        val formattedBlogsWithIndex =
-          (index, formattedFinalResult)
-            .zipped
-            .map((index, formattedBlogger) => (index, formattedBlogger))
-            .map { case (rank, formattedBlogger) =>
-              rank + ". " + formattedBlogger.name + " " + formattedBlogger.numberOfBlogs + " " + formattedBlogger.totalViews
+      optionalPosts match {
+        case Some(posts) =>
+          val postByAuthorIds = posts.groupBy { post =>
+            if (post.author.first_name.nonEmpty) {
+              (post.author.ID, post.author.first_name)
+            } else {
+              (post.author.ID, post.author.name)
             }
+          }
 
-        client.postChatMessage(chanId, formattedBlogsWithIndex mkString "\n", Some("Bot"))
+          val formattedBloggers = getFormattedBloggers(postByAuthorIds)
+
+          postMessageOnSlack(formatResult(formattedBloggers, posts))
+        case None        =>
+            info(s"No blog found between $firstDay and $lastDay")
       }
-    }
   }
 
-  def getFinalResult(postByAuthorIds: Map[(Int, String), List[Post]]): List[Blogger] = {
-    val result = postByAuthorIds.map {
+  def getFormattedBloggers(postByAuthorIds: Map[(Int, String), List[Post]]): List[FormattedBlogger] = {
+    val bloggers = postByAuthorIds.map {
       case ((authorId, authorName), posts) =>
         val viewsCountAndBlogId = posts.map { blog =>
           val viewsCount = wordpressService.getPostViewByPostId(blog.ID)
@@ -90,9 +60,42 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with A
         val totalViews = viewsCountAndBlogId.map { case (_, views) => views }.sum
         val blogIds = viewsCountAndBlogId.map { case (blogId, _) => blogId }
         val viewCounts = viewsCountAndBlogId.map { case (_, views) => views }
-        Blogger(blogIds, authorId, authorName, blogIds.size, viewCounts, totalViews)
+        FormattedBlogger(authorName, blogIds.size, viewCounts, totalViews)
     }.toList
 
-    result.sortBy(_.totalViews).reverse
+    bloggers.sortBy(_.totalViews).reverse
+  }
+
+  def formatResult(bloggers: List[FormattedBlogger], totalPosts: List[Post]): String = {
+    val index = 1 to totalPosts.size
+
+    val formattedBlogsWithIndex =
+      (index, bloggers)
+        .zipped
+        .map((index, formattedBlogger) => (index, formattedBlogger))
+        .map { case (rank, formattedBlogger) =>
+          f"$rank%-10s${formattedBlogger.name}%-20s${formattedBlogger.numberOfBlogs}%-20d${formattedBlogger.totalViews}%-10d"
+        } mkString "\n"
+
+    messageHelper.getMessage(bloggers, formattedBlogsWithIndex, totalPosts.length)
+  }
+
+  def postMessageOnSlack(formattedResult: String): Future[String] = {
+    val client = SlackApiClient(SLACK_API_TOKEN)
+    val eventualChannelId = client.listChannels().map { channels =>
+      channels.map { channel =>
+        channel.name -> channel.id
+      }.toMap.get(CHANNEL_NAME)
+    }
+
+    eventualChannelId collect { case optionalChannelId if optionalChannelId.nonEmpty =>
+      client.postChatMessage(optionalChannelId.get, formattedResult, Some("Blogger of the Month"))
+    }
+
+    eventualChannelId flatMap { optionalChannelId =>
+      optionalChannelId.fold(Future.successful("")) { chanId =>
+        client.postChatMessage(optionalChannelId.get, formattedResult, Some("Blogger of the Month"))
+      }
+    }
   }
 }
