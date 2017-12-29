@@ -47,11 +47,11 @@ class WordpressService extends LoggerHelper {
     try {
       val requestUrl =
         s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
-           |?after=%s&before=%s&number=$BLOGS_LIMIT""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
+            |?after=%s&before=%s&number=$BLOGS_LIMIT""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
 
-      val eventualResponse = Http.default(dispatch.url(requestUrl) OK as.String)
+      val eventualResponse = executeRequestWithoutAuth(requestUrl)
 
-      val optionalBlogs = JArray(liftParse(eventualResponse()).children).extractOpt[Blogs]
+      val optionalBlogs = JArray(liftParse(eventualResponse).children).extractOpt[Blogs]
 
       @tailrec
       def getPostInOffset(found: Int, totalPosts: List[Post], offset: Int): List[Post] = {
@@ -60,7 +60,7 @@ class WordpressService extends LoggerHelper {
         } else {
           val requestUrl =
             s"""https://public-api.wordpress.com/rest/v1.1/sites/$SITE_NAME/posts
-               |?after=%s&before=%s&number=$BLOGS_LIMIT&offset=$offset""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
+                |?after=%s&before=%s&number=$BLOGS_LIMIT&offset=$offset""".stripMargin.replaceAll("\n", "") format(afterDate, beforeDate)
 
           val response = executeRequestWithoutAuth(requestUrl)
           val optionalPosts = (liftParse(response) \\ "posts").extractOpt[List[Post]]
