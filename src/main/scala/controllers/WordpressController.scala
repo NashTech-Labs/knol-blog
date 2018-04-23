@@ -36,7 +36,9 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with L
         case Some(posts) =>
           val postByAuthorIds = posts.groupBy { post =>
             if (post.author.first_name.nonEmpty) {
-              (post.author.ID, post.author.first_name)
+              val authorLastName = if(post.author.last_name.nonEmpty) " " + post.author.last_name else ""
+
+              (post.author.ID, post.author.first_name + authorLastName)
             } else {
               (post.author.ID, post.author.name)
             }
@@ -74,7 +76,7 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with L
         .zipped
         .map((index, formattedBlogger) => (index, formattedBlogger))
         .map { case (rank, formattedBlogger) =>
-          f"$rank%-10s${formattedBlogger.name}%-20s${formattedBlogger.numberOfBlogs}%-20d${formattedBlogger.totalViews}%-10d"
+          f"$rank%-10s${formattedBlogger.name}%-30s${formattedBlogger.numberOfBlogs}%-20d${formattedBlogger.totalViews}%-10d"
         } mkString "\n"
 
     messageHelper.getMessage(bloggers, formattedBlogsWithIndex, totalPosts.length)
@@ -86,10 +88,6 @@ class WordpressController(implicit val system: ActorSystem) extends Actor with L
       channels.map { channel =>
         channel.name -> channel.id
       }.toMap.get(CHANNEL_NAME)
-    }
-
-    eventualChannelId collect { case optionalChannelId if optionalChannelId.nonEmpty =>
-      client.postChatMessage(optionalChannelId.get, formattedResult, Some("Blogger of the Month"))
     }
 
     eventualChannelId flatMap { optionalChannelId =>

@@ -19,11 +19,11 @@ class MessageHelper {
         s"Total blogs we got this time are *$totalPosts* and total views are *${formattedFinalResult.map(_.totalViews).sum}*\n\n" +
         "Below are the standings for the month - \n\n"
 
-    val header = f"$serialNoText%-10s$nameText%-20s$totalBlogsPostedText%-20s$totalViewsText%-10s%n%n"
+    val header = f"$serialNoText%-10s$nameText%-30s$totalBlogsPostedText%-20s$totalViewsText%-10s%n%n"
     val standings = "```" + header + formattedBlogsWithIndex + "```"
     val endingText =
       s"\n\nAs per the number of views the MVB is : *$winnerName*\n\n" +
-        s"Congrats @$winnerName :taco: :taco:"
+        s"Congrats $winnerName :taco: :taco:"
 
     initialText + standings + endingText
   }

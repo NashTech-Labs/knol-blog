@@ -11,4 +11,6 @@ libraryDependencies ++= Seq(
   "com.typesafe" % "config" % "1.3.1",
   "com.github.gilbertw1" %% "slack-scala-client" % "0.2.2",
   "com.enragedginger" %% "akka-quartz-scheduler" % "1.6.0-akka-2.4.x",
+  "org.scalatest" %% "scalatest" % "3.0.4",
+  "org.specs2" % "specs2_2.11" % "2.3.11",
   "log4j" % "log4j" % "1.2.17")
